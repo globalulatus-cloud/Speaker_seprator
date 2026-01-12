@@ -6,33 +6,59 @@ import torch
 import tempfile
 import os
 import gc
+import shutil
 
 from pyannote.audio import Pipeline
 from pydub import AudioSegment
 from huggingface_hub import login
 
-# -----------------------------
+# -------------------------------------------------
+# Startup: FFmpeg validation
+# -------------------------------------------------
+def check_ffmpeg():
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        st.error(
+            """
+            ❌ **FFmpeg not found**
+
+            This app requires **ffmpeg** and **ffprobe** in PATH.
+
+            **Windows fix**
+            1. Download from https://www.gyan.dev/ffmpeg/builds/
+            2. Extract to `C:\\ffmpeg`
+            3. Add `C:\\ffmpeg\\bin` to PATH
+            4. Restart Streamlit
+            """
+        )
+        st.stop()
+
+check_ffmpeg()
+
+# -------------------------------------------------
 # Page config
-# -----------------------------
+# -------------------------------------------------
 st.set_page_config(page_title="Speaker Separation", layout="centered")
 st.title("Speaker Separation")
 st.write("Separate two speakers into individual mono audio files.")
 
-# -----------------------------
-# Session state init
-# -----------------------------
+# -------------------------------------------------
+# Session state
+# -------------------------------------------------
 if "speaker1_bytes" not in st.session_state:
     st.session_state.speaker1_bytes = None
     st.session_state.speaker2_bytes = None
     st.session_state.output_format = None
 
-# -----------------------------
+# -------------------------------------------------
 # Sidebar
-# -----------------------------
+# -------------------------------------------------
 with st.sidebar:
     hf_token = st.text_input("Hugging Face Token", type="password")
     output_format = st.selectbox("Output format", ["wav", "m4a"])
 
+# -------------------------------------------------
+# Upload
+# -------------------------------------------------
 uploaded_file = st.file_uploader(
     "Upload audio file",
     type=["wav", "mp3", "m4a", "flac", "ogg"]
@@ -41,9 +67,9 @@ uploaded_file = st.file_uploader(
 if not uploaded_file or not hf_token:
     st.stop()
 
-# -----------------------------
+# -------------------------------------------------
 # Run separation
-# -----------------------------
+# -------------------------------------------------
 if st.button("Separate Speakers", type="primary"):
 
     try:
@@ -59,7 +85,7 @@ if st.button("Separate Speakers", type="primary"):
 
         progress.progress(20)
 
-        # Convert
+        # Convert to mono WAV
         audio = AudioSegment.from_file(input_path)
         audio = audio.set_channels(1).set_frame_rate(16000)
 
@@ -72,16 +98,18 @@ if st.button("Separate Speakers", type="primary"):
 
         progress.progress(40)
 
-        # Diarization
-        pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
+        # Load diarization pipeline
+        pipeline = Pipeline.from_pretrained(
+            "pyannote/speaker-diarization-3.1"
+        )
         pipeline.to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
 
-        diarization = pipeline(wav_path)
-        ann = diarization.speaker_diarization
+        # 🔴 FIXED API: pipeline returns Annotation directly
+        ann = pipeline(wav_path)
 
         progress.progress(60)
 
-        # Separation
+        # Separate speakers
         audio_full = AudioSegment.from_wav(wav_path)
         duration_ms = len(audio_full)
 
@@ -101,7 +129,7 @@ if st.button("Separate Speakers", type="primary"):
             st.error("Only one speaker detected.")
             st.stop()
 
-        # Export to temp
+        # Export to temp + store in session
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{output_format}") as f1:
             speaker_audio[speakers[0]].export(f1.name, format=output_format)
             with open(f1.name, "rb") as b:
@@ -114,7 +142,7 @@ if st.button("Separate Speakers", type="primary"):
 
         st.session_state.output_format = output_format
 
-        # Cleanup immediately (SAFE now)
+        # Cleanup files
         for p in [input_path, wav_path, f1.name, f2.name]:
             try:
                 os.remove(p)
@@ -128,10 +156,11 @@ if st.button("Separate Speakers", type="primary"):
         st.error(str(e))
         st.stop()
 
-# -----------------------------
-# Downloads (SAFE ON RERUN)
-# -----------------------------
+# -------------------------------------------------
+# Downloads (safe across reruns)
+# -------------------------------------------------
 if st.session_state.speaker1_bytes:
+
     st.success("Separation complete")
 
     col1, col2 = st.columns(2)
