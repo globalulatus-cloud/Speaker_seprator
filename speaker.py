@@ -11,20 +11,20 @@ from pyannote.audio import Pipeline
 from pydub import AudioSegment
 from huggingface_hub import login
 
-# -------------------------
+# -------------------------------------------------
 # Page config
-# -------------------------
+# -------------------------------------------------
 st.set_page_config(
-    page_title="Speaker Separator",
+    page_title="Speaker Separation",
     layout="centered"
 )
 
 st.title("Speaker Separation")
 st.write("Separate two speakers into individual mono audio files.")
 
-# -------------------------
+# -------------------------------------------------
 # Sidebar
-# -------------------------
+# -------------------------------------------------
 with st.sidebar:
     st.header("Settings")
 
@@ -48,13 +48,13 @@ with st.sidebar:
            - https://huggingface.co/pyannote/segmentation
         2. Paste HF token
         3. Upload audio
-        4. Click Separate
+        4. Click Separate Speakers
         """
     )
 
-# -------------------------
-# File upload
-# -------------------------
+# -------------------------------------------------
+# Upload
+# -------------------------------------------------
 uploaded_file = st.file_uploader(
     "Upload audio file",
     type=["wav", "mp3", "m4a", "flac", "ogg"]
@@ -68,21 +68,21 @@ if not hf_token:
     st.warning("Please enter your Hugging Face token.")
     st.stop()
 
-# -------------------------
+# -------------------------------------------------
 # Action
-# -------------------------
+# -------------------------------------------------
 if st.button("Separate Speakers", type="primary"):
 
     try:
-        # Authenticate HF (global, no kwargs anywhere)
+        # Authenticate HF (global auth, no kwargs)
         login(token=hf_token)
 
         progress = st.progress(0)
         status = st.empty()
 
-        # -------------------------
+        # -------------------------------------------------
         # Save uploaded file
-        # -------------------------
+        # -------------------------------------------------
         status.text("Loading audio...")
         progress.progress(10)
 
@@ -91,9 +91,9 @@ if st.button("Separate Speakers", type="primary"):
             f.write(uploaded_file.read())
             input_path = f.name
 
-        # -------------------------
-        # Convert audio to mono WAV
-        # -------------------------
+        # -------------------------------------------------
+        # Convert to mono WAV
+        # -------------------------------------------------
         status.text("Converting audio...")
         progress.progress(25)
 
@@ -107,9 +107,9 @@ if st.button("Separate Speakers", type="primary"):
         del audio
         gc.collect()
 
-        # -------------------------
-        # Load diarization pipeline
-        # -------------------------
+        # -------------------------------------------------
+        # Load model
+        # -------------------------------------------------
         status.text("Loading diarization model...")
         progress.progress(40)
 
@@ -120,18 +120,18 @@ if st.button("Separate Speakers", type="primary"):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         pipeline.to(device)
 
-        # -------------------------
+        # -------------------------------------------------
         # Run diarization
-        # -------------------------
+        # -------------------------------------------------
         status.text("Running speaker diarization...")
         progress.progress(60)
 
         diarization = pipeline(wav_path)
         ann = diarization.speaker_diarization
 
-        # -------------------------
+        # -------------------------------------------------
         # Separate speakers
-        # -------------------------
+        # -------------------------------------------------
         status.text("Separating speakers...")
         progress.progress(80)
 
@@ -158,9 +158,9 @@ if st.button("Separate Speakers", type="primary"):
             st.warning("Only one speaker detected. Cannot separate.")
             st.stop()
 
-        # -------------------------
-        # Export outputs
-        # -------------------------
+        # -------------------------------------------------
+        # Export to temp files
+        # -------------------------------------------------
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{output_format}") as f1:
             spk1_path = f1.name
             speaker_audio[speakers[0]].export(spk1_path, format=output_format)
@@ -168,6 +168,15 @@ if st.button("Separate Speakers", type="primary"):
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{output_format}") as f2:
             spk2_path = f2.name
             speaker_audio[speakers[1]].export(spk2_path, format=output_format)
+
+        # -------------------------------------------------
+        # READ FILES INTO MEMORY (CRITICAL FIX)
+        # -------------------------------------------------
+        with open(spk1_path, "rb") as f:
+            speaker1_bytes = f.read()
+
+        with open(spk2_path, "rb") as f:
+            speaker2_bytes = f.read()
 
         progress.progress(100)
         status.text("Done!")
@@ -177,24 +186,24 @@ if st.button("Separate Speakers", type="primary"):
         col1, col2 = st.columns(2)
 
         with col1:
-            with open(spk1_path, "rb") as f:
-                st.download_button(
-                    "Download Speaker 1",
-                    f,
-                    file_name=f"speaker1.{output_format}"
-                )
+            st.download_button(
+                "Download Speaker 1",
+                data=speaker1_bytes,
+                file_name=f"speaker1.{output_format}",
+                mime=f"audio/{output_format}"
+            )
 
         with col2:
-            with open(spk2_path, "rb") as f:
-                st.download_button(
-                    "Download Speaker 2",
-                    f,
-                    file_name=f"speaker2.{output_format}"
-                )
+            st.download_button(
+                "Download Speaker 2",
+                data=speaker2_bytes,
+                file_name=f"speaker2.{output_format}",
+                mime=f"audio/{output_format}"
+            )
 
-        # -------------------------
-        # Cleanup
-        # -------------------------
+        # -------------------------------------------------
+        # Cleanup (SAFE: after bytes are loaded)
+        # -------------------------------------------------
         for p in [input_path, wav_path, spk1_path, spk2_path]:
             try:
                 os.remove(p)
