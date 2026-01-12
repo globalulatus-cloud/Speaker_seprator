@@ -6,3 +6,4 @@ huggingface_hub==0.19.4
 pydub
 soundfile
 streamlit
+ffmpeg-python
